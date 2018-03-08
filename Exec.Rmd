@@ -1,0 +1,205 @@
+---
+title: "Executive Summary"
+output: html_document
+---
+
+#By Yiming Sun
+I'm using data of [Expenditures by Candidates and Political Committees](https://data.wa.gov/Politics/Expenditures-by-Candidates-and-Political-Committee/tijg-9zyp). The dataset contains expenditures made by Washington State Candidates and Political Committees for the last 10 years as reported to the Public Disclosure Commission. 
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+#preparation
+library(ggthemes)
+library(scales)
+library(lubridate)
+library(knitr)
+library(tidyverse)
+library(ggplot2)
+```
+
+I exlpored the distribution of total expenditures paid for different zipcode WA recipients in 2016.
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+#Putting in the data
+token='&$$app_token=qkzOjPpAsJDHAxBVNro7U82j5'
+endpoint="https://data.wa.gov/resource/exenditures_by_candidates_and_political_committees.json?"
+filters='&jurisdiction_type=Statewide'
+sqlQueries='&$where=election_year >= 2012'
+limit='$limit=40000'
+
+urlLink = paste0(endpoint,limit,filters,token)
+library(jsonlite) 
+expenditures = fromJSON(urlLink)
+```
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+#Keep only 4 columns of the data frame
+
+expenditures= expenditures[,c('recipient_state','recipient_zip','amount','election_year','party')]
+expenditures$amount=as.numeric(expenditures$amount)
+expenditures$recipient_zip=as.numeric(expenditures$recipient_zip)
+```
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+#Clean the data-Keep recipient_state of "WA"" and election year of "2016""
+#Also reset the dataframe
+WA2016=expenditures[expenditures$recipient_state%in%'WA'&expenditures$election_year%in%'2016',]
+row.names(WA2016)=NULL
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+#drop the missing data
+WA2016$recipient_zip=as.numeric(WA2016$recipient_zip)
+WA2016=WA2016[complete.cases(WA2016),]
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+#reset dataframe again
+row.names(WA2016)=NULL
+```
+I hope to show the following data in a map to see the distribution.
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+#Create a new data frame that aggregate the expenditure amount according to zipcode
+WA_ex_zip=aggregate(list(amount=WA2016$amount),list(Zip=WA2016$recipient_zip),sum)
+names(WA_ex_zip)=c('recipient_zip','amount')
+WA_ex_zip=WA_ex_zip[(WA_ex_zip$recipient_zip <=99403) & (WA_ex_zip$recipient_zip>=98001),]
+head(WA_ex_zip)
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,results='hide'}
+#Get the shapefile
+compressedMap= "https://github.com/EvansDataScience/data/raw/master/WAzips.zip"
+library(utils)
+temp=tempfile()
+download.file(compressedMap, temp)
+unzip(temp)
+
+#(maps=list.files(pattern = 'shp'))
+library(rgdal)
+wazipMap <- rgdal::readOGR("SAEP_ZIP_Code_Tabulation_Areas.shp",stringsAsFactors=F)
+```
+And this is the map I created, we could see that not every zipcode in WA have recipients of govenment expenditures-only ones with color in the map have. In this map, the places with color blue have the highest amount of govenment expenditures, and the places with color yellow have the lowest. It shows that recipients from zipcode '98109', '98104', '98122', '98115', '98134', '98194', and '98101'received relative high amount of expenditures.
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+#merge data sets and shapefile
+expenWAmap=merge(wazipMap,WA_ex_zip, by.x='ZCTA5CE10', by.y='recipient_zip',all.x=F)
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+#Create the map
+library(RColorBrewer)
+library(classInt)
+varToPLot=WA_ex_zip$amount
+
+numberOfClasses = 5
+colorForScale='YlGnBu'
+colors = brewer.pal(numberOfClasses, colorForScale)
+intervals <- classIntervals(varToPLot, numberOfClasses, 
+                            style = "quantile",
+                            dataPrecision=2)
+
+colorPallette <- findColours(intervals, colors)
+
+legendText="Expenditure amount"
+shrinkLegend=0.4
+title="Distibution of aggregated expenditure of WA in 2016"
+
+plot(wazipMap,col='white',main=title)
+plot(expenWAmap, col = colorPallette,border='grey',add=T)
+
+legend('topright', legend = names(attr(colorPallette, "table")), 
+       fill = attr(colorPallette, "palette"), cex = shrinkLegend, 
+       bty = "n",
+       title=legendText)
+```
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+WA_ex_zip$recipient_zip=as.character(WA_ex_zip$recipient_zip)
+WA_ex_zip %>% 
+  filter(
+    recipient_zip %in% c('98109', '98104', '98122', '98115', '98134', '98194', '98101') 
+    ) %>%
+  ggplot(aes(x=recipient_zip, y=amount)) + 
+  geom_bar(aes(fill = amount), position = "dodge", stat="identity")+
+  labs(x = 'Recipient Zipcode', y = 'Total Expenditure', title='Zipcode with the highest Expenditure')
+
+```
+
+We have seen the distribution of total expenditures in those areas, but there could have more than one recipient in one area. I hope to know how many recipients are there in each zipcode, and what's the average amount each recipient received. 
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+Num_zip=WA2016[(WA2016$recipient_zip <=99403) & (WA2016$recipient_zip>=98001),]
+Num_zip2 <- as.data.frame(table(Num_zip$recipient_zip))
+colnames(Num_zip2)<- c("recipient_zip","Freq")
+#Num_zip2[rev(order(Num_zip2$Freq)),]
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+#Merge the two data frame we got above
+A=merge(WA_ex_zip,Num_zip2, by.x='recipient_zip', by.y='recipient_zip',all.x=F)
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+Average=A$amount/A$Freq
+
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+#Add Average column to dataframe A, name the new dataframe as B
+B <-cbind(A,Average)
+
+```
+I thus made another map to show the distribution of average expenditure. When I compared this map with the last one, I could easily find that the color has changed a lot. The places with color blue still show the highest average govenment expenditures, and the places with color yellow show the lowest.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+AveWAmap=merge(wazipMap,A, by.x='ZCTA5CE10', by.y='recipient_zip',all.x=F)
+varToPLot2=B$Average
+
+numberOfClasses = 5
+colorForScale='YlGnBu'
+colors = brewer.pal(numberOfClasses, colorForScale)
+intervals <- classIntervals(varToPLot2, numberOfClasses, 
+                            style = "quantile",
+                            dataPrecision=2)
+
+colorPallette <- findColours(intervals, colors)
+
+legendText="Expenditure amount"
+shrinkLegend=0.4
+title="Distibution of average expenditure of WA in 2016"
+
+plot(wazipMap,col='white',main=title)
+plot(AveWAmap, col = colorPallette,border='grey',add=T)
+
+legend('topright', legend = names(attr(colorPallette, "table")), 
+       fill = attr(colorPallette, "palette"), cex = shrinkLegend, 
+       bty = "n",
+       title=legendText)
+```
+
+In the end of the analysis, I also explored how different parties contributed to the expenditures of the places with high expenditures(These places are whose zipcode are '98109', '98104', '98122', '98115', '98134'). We could see that the democrat party has a higher contribution than other parties in four of these five areas.Only Area with zipcode 98109's expenditure is dominated by another party, which is Republican. Democrat party contributed to all of the govenance expenditure in the area with zipcode 98115.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+WA2016$recipient_zip=as.character(WA2016$recipient_zip)
+WA2016 %>% 
+  filter(
+    recipient_zip %in% c('98109', '98104', '98122', '98115', '98134') 
+    ) %>%
+  ggplot(aes(recipient_zip, amount)) + geom_bar(aes(fill = party), position = "dodge", stat="identity")
+```
+
+And we could see how much does each party contribute to the government expenditure in WA in 2016 with the following plot. The Democrat party contributed the most, with Republican in the second place.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+WA2016 %>% 
+  ggplot(aes(party, fill = amount)) + 
+  geom_bar() + 
+  labs(
+    x = 'Party'
+    , y = 'Expenditure amount'
+    , fill = element_blank()
+    ) 
+```
+
+
